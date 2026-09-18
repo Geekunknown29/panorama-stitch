@@ -11,7 +11,7 @@
 - **Project Title**: Intelligent Panorama Builder
 - **Domain**: Computer Vision, Feature Detection, Image Geometry, Homography Estimation, Image Blending
 - **Author**: Academic Computer Vision Project Team
-- **Repository**: Seeding Academic Public Standard Codebase
+- **Repository**: https://github.com/Geekunknown29/panorama-stitch
 - **Evaluation Target**: Command-Line Image Stitching System
 
 ---
@@ -43,7 +43,7 @@ Automating image alignment requires solving core computer vision challenges:
 - **FR5 Homography Estimation & RANSAC**: Estimate 3x3 homography matrix $H$; reject outliers; calculate inlier ratio % and mean reprojection error.
 - **FR6 Perspective Warping**: Compute global bounding box dimensions, construct translation matrix $H_{trans}$, and warp images onto unified canvas.
 - **FR7 Image Blending**: Create distance-transform weight maps to produce smooth linear alpha blending across overlapping boundaries.
-- **FR8 Output & Metrics Generation**: Save cropped panorama to `outputs/panorama.jpg` and export metrics to `outputs/metrics.json`.
+- **FR8 Output & Metrics Generation**: Save a cropped panorama and structured metrics, allocating numbered filenames when an earlier result already exists.
 - **FR9 Debug Visualization**: Export intermediate keypoint overlays, match correspondence lines, homography matrix text files, and warped frames when `--debug` is enabled.
 
 ---
@@ -51,7 +51,7 @@ Automating image alignment requires solving core computer vision challenges:
 ## 5. Non-Functional Requirements
 - **NFR1 Reliability**: Gracefully handle missing files, unsupported formats, corrupt data, low match counts, and homography failures with controlled human-readable error messages and exit code 1.
 - **NFR2 Maintainability**: Modular architecture adhering to PEP 8, type hinting, class encapsulation, and zero global mutable state.
-- **NFR3 Performance**: Process 3 multi-megapixel images in under 5.0 seconds on standard CPU hardware.
+- **NFR3 Performance**: Keep working-image dimensions, canvas limits, and accumulation buffers bounded so ordinary three-image workloads remain practical on CPU hardware.
 - **NFR4 Reproducibility**: Self-contained sample datasets (`data/sample/`) allowing offline execution out-of-the-box.
 - **NFR5 Portability**: Machine-independent relative file paths compatible across Windows, Linux, and macOS.
 
@@ -97,7 +97,7 @@ Automating image alignment requires solving core computer vision challenges:
                              |
                              v
                  +-----------------------+
-                 |    Feathered Blend    | (ImageBlender - Distance Transform)
+                 |    Global Warp & Blend | (ImageWarper + ImageBlender)
                  +-----------+-----------+
                              |
                              v
@@ -107,109 +107,132 @@ Automating image alignment requires solving core computer vision challenges:
                              |
                              v
                  +-----------------------+
-                 |  Outputs & Metrics    | (outputs/panorama.jpg + metrics.json)
+                 |  Outputs & Metrics    | (output image + metrics JSON)
                  +-----------------------+
 ```
 
 ---
 
 ## 7. Use Case Diagram
-See [`docs/use_case.md`](file:///d:/Projects/panorama_stitch/docs/use_case.md) for full use case diagram detailing interactions between User, Evaluator, Pytest Automation, and system modules.
+See [`use_case.md`](use_case.md) for the full use case diagram detailing interactions between the user, evaluator, pytest automation, and system modules.
 
 ---
 
 ## 8. Workflow Diagram
-See [`docs/workflow.md`](file:///d:/Projects/panorama_stitch/docs/workflow.md) for complete flowchart of system execution paths and error recovery branches.
+See [`workflow.md`](workflow.md) for the complete flowchart of system execution paths and error recovery branches.
 
 ---
 
 ## 9. Sequence Diagram
-See [`docs/sequence.md`](file:///d:/Projects/panorama_stitch/docs/sequence.md) for object call sequence across modules during pipeline execution.
+See [`sequence.md`](sequence.md) for the object call sequence across modules during pipeline execution.
 
 ---
 
 ## 10. Class / Component Diagram
-See [`docs/class_diagram.md`](file:///d:/Projects/panorama_stitch/docs/class_diagram.md) for complete object-oriented class structure and design abstractions.
+See [`class_diagram.md`](class_diagram.md) for the complete object-oriented class structure and design abstractions.
 
 ---
 
 ## 11. Design Decisions and Rationale
 1. **Classical Vision vs Deep Learning**: Selected classical SIFT/ORB + RANSAC homography over deep neural networks. Classical methods are deterministic, computationally lightweight (no GPU required), fully explainable for course evaluation, and highly accurate for planar/panoramic scenes.
-2. **Sequential Pairwise Stitching**: Implemented an iterative baseline ($I_{base} \leftarrow \text{Blend}(I_{base}, I_{next})$) which ensures predictable memory consumption and simple debug artifact tracing.
-3. **Distance-Transform Feathered Blending**: Replaced naive alpha overlay or hard seam cuts with distance-transform weighting map $D(x, y)$. This smoothly transitions intensity across overlapping boundaries while preserving sharp detail in central regions.
+2. **Validated Automatic Ordering**: For three or more images, `ImageOrderer` builds a pairwise graph from validated homographies. Edge scores combine quality and inlier count, disconnected images can be excluded, and the selected pair estimates are reused during stitching so ordering and composition do not make independent RANSAC decisions.
+3. **Central Reference Composition**: Multi-image stitching maps every image into the middle image's coordinate frame. Left-side transforms are composed forward; right-side transforms use inverses. A focused unit test verifies both directions.
+4. **Distance-Transform Feathered Blending**: Multi-image blending accumulates warped colors and distance weights into bounded global buffers, smoothly transitioning intensity across overlaps without repeatedly creating panorama-sized layer stacks.
+5. **Defensive Output and Failure Handling**: Homography, canvas, and memory checks reject unsafe geometry before allocation. Existing output and metric files receive numbered names instead of being overwritten.
 
 ---
 
 ## 12. Implementation Details
-The system is implemented across Python source modules:
-- `src/input_handler.py`: File system verification and format checking.
-- `src/preprocessing.py`: Spatial aspect-preserving scaling and grayscale transformation.
-- `src/feature_detector.py`: SIFT/ORB keypoint and descriptor extraction.
-- `src/feature_matcher.py`: KNN matching and ratio test filtering.
-- `src/homography.py`: OpenCV RANSAC homography estimation and reprojection error computation.
-- `src/warper.py`: Global bounding box computation and translation matrix synthesis.
-- `src/blender.py`: Distance-transform weight mask generation and multi-channel alpha blending.
-- `src/cropper.py`: Contour-based non-zero bounding box cropping.
-- `src/evaluator.py`: Structured JSON metrics compiler.
-- `src/utils.py`: Debug image renderer and formatted console reporter.
+
+### 12.1 Entry Point and Input Modes
+
+`main.py` defines `PanoramaStitcher`, the application controller, and the CLI entry point. It accepts explicit files with `--input`, directory input with `--input-dir`, a native picker with `--gui`, or terminal prompts with `--interactive`. Automatic ordering is enabled by default for three or more images and can be disabled with `--no-auto-order`.
+
+`InputHandler.validate_and_collect_paths` checks existence, file type, readability, and the minimum of two images. CLI exceptions derived from `PanoramaError` are converted into clear error messages and a non-zero exit status.
+
+### 12.2 Preprocessing and Features
+
+`ImagePreprocessor` reads each image and creates a working copy whose largest dimension is at most `max_dimension` (default 1600). It preserves aspect ratio, stores original and working shapes, and creates grayscale data for feature extraction. The color working copy and grayscale working copy share the same coordinate system.
+
+`FeatureDetector` supports SIFT and ORB. SIFT is the default and is limited to approximately 4,000 features per image. `FeatureMatcher` uses OpenCV KNN matching with two neighbors and Lowe's ratio test. It returns source points, destination points, match counts, and the retained match objects.
+
+### 12.3 Homography Estimation and Validation
+
+`HomographyEstimator` uses `cv2.findHomography` with RANSAC to estimate a matrix mapping source coordinates to destination coordinates. It computes inlier counts, inlier ratios, and mean/median/95th-percentile/maximum reprojection errors.
+
+Pair quality validation also checks:
+
+- finite values, determinant sign and magnitude, and condition number;
+- projected-corner convexity, area ratio, scale change, and dimensions;
+- perspective terms and corner displacement relative to the destination frame;
+- spatial support of the inliers.
+
+Spatial support uses normalized bounding-box width and height, convex-hull area, and occupied quadrants. A valid edge-overlap pair may pass through sufficient width/height or hull coverage even when its inliers occupy one quadrant; a tiny concentrated cluster is still rejected.
+
+### 12.4 Automatic Ordering and Transform Reuse
+
+`ImageOrderer.find_optimal_order` detects features once, evaluates candidate pairs, and creates a weighted connectivity graph. Only pair estimates whose quality report is accepted become graph edges. Disconnected components are reported; with partial ordering enabled, the largest connected component is retained and excluded filenames are recorded in metrics.
+
+Each accepted edge stores its homography, match result, quality report, and whether the estimate was computed in lower-index-to-higher-index direction. After the best chain is selected, `PanoramaStitcher` orients each cached matrix to the chain direction. Multi-image stitching reuses these validated estimates rather than re-running matching and RANSAC for the same edge. This avoids inconsistent ordering-versus-stitching decisions.
+
+### 12.5 Multi-Image Chaining
+
+For a chain of images, the middle image is the reference frame. If $H_{k\rightarrow k+1}$ maps image $k$ to image $k+1$, then:
+
+$$
+H_{k\rightarrow ref} = H_{k+1\rightarrow ref} H_{k\rightarrow k+1}
+$$
+
+for images to the left of the reference. For images to the right, the inverse pair transform is composed:
+
+$$
+H_{k\rightarrow ref} = H_{k-1\rightarrow ref} H_{k\rightarrow k-1}.
+$$
+
+The cumulative matrices are validated before global canvas allocation. `tests/test_homography.py` includes synthetic forward and inverse three-image checks.
+
+### 12.6 Warping, Blending, and Cropping
+
+`ImageWarper.calculate_multi_canvas_bounds` projects all image corners into the reference frame, computes a global bounding box, and creates a translation matrix for negative coordinates. It rejects non-positive, oversized, over-pixel-limit, or over-memory-limit canvases before allocation.
+
+`ImageBlender.blend_multi` warps each image and a distance-transform weight map into the global canvas. It accumulates weighted color and weight buffers, then normalizes valid pixels into the final BGR panorama. `PanoramaCropper` removes empty black borders from the completed composite.
+
+The two-image path remains separate for backward compatibility: it calculates pair bounds, warps both images, and uses the two-layer feathered blender.
+
+### 12.7 Metrics, Debugging, and Output Files
+
+`Evaluator` records image counts, keypoints, raw/good matches, inliers, inlier ratios, reprojection errors, dimensions, excluded images, pair-quality reports, status, and elapsed time as JSON. `DebugWriter` optionally saves keypoint drawings, match visualizations, homographies, projected corners, warped layers, and pair reports.
+
+`PanoramaStitcher._allocate_available_filepath` prevents overwriting an existing panorama or metrics file by selecting numbered siblings such as `panorama_1.jpg`. Debug artifacts are written to a run-specific directory beside the selected output.
 
 ---
 
 ## 13. Empirical Results & Performance Evaluation
 
-Execution on 3-image sample dataset (`scene1_01.jpg`, `scene1_02.jpg`, `scene1_03.jpg`):
+The repository includes six overlapping sample images in `data/sample/` and two unrelated failure-case images in `data/failure_cases/`. A representative demonstration is:
 
-```json
-{
-    "status": "SUCCESS",
-    "images_processed": 3,
-    "feature_detector": "sift",
-    "keypoints": {
-        "scene1_01.jpg": 4002,
-        "scene1_02.jpg": 4000,
-        "scene1_03.jpg": 4000
-    },
-    "matches": {
-        "raw": {
-            "scene1_01.jpg -> scene1_02.jpg": 4000,
-            "panorama_layer_2 -> scene1_03.jpg": 4000
-        },
-        "good": {
-            "scene1_01.jpg -> scene1_02.jpg": 763,
-            "panorama_layer_2 -> scene1_03.jpg": 781
-        }
-    },
-    "inliers": {
-        "scene1_01.jpg -> scene1_02.jpg": 486,
-        "panorama_layer_2 -> scene1_03.jpg": 589
-    },
-    "average_inlier_ratio_percent": 69.56,
-    "reprojection_errors": {
-        "scene1_01.jpg -> scene1_02.jpg": 0.142,
-        "panorama_layer_2 -> scene1_03.jpg": 0.132
-    },
-    "panorama_dimensions": {
-        "width": 2399,
-        "height": 1007
-    },
-    "processing_time_seconds": 2.45
-}
+```bash
+python main.py --input data/sample/scene1_01.jpg data/sample/scene1_02.jpg data/sample/scene1_03.jpg --output outputs/panorama.jpg
 ```
 
-### Analysis of Results
-- **Keypoint Detection**: ~4,000 SIFT keypoints detected per image view.
-- **Match Filtering**: Lowe's ratio test filtered ~4,000 raw KNN matches down to ~770 high-confidence candidate matches per image pair.
-- **RANSAC Inliers**: RANSAC identified ~530 geometric inliers per pair, achieving an average inlier ratio of **69.56%**.
-- **Geometric Precision**: Mean reprojection errors of **0.142px** and **0.132px** demonstrate sub-pixel alignment accuracy.
-- **Execution Efficiency**: Total pipeline processing time for 3 images was **2.45 seconds**.
+The generated metrics JSON records the actual detector, image dimensions, keypoint counts, raw and filtered matches, RANSAC inliers, reprojection errors, excluded images, pair-quality reports, panorama dimensions, status, and processing time. Exact values depend on the OpenCV build, CPU, input files, and detector settings; the report therefore treats the JSON file produced by each run as the authoritative measurement rather than hard-coding one historical run.
+
+The validation workflow used during submission preparation included:
+
+- 12 focused homography tests, including spatial edge-overlap acceptance and synthetic forward/inverse chaining;
+- selected 2-image and 3-image sample pipeline tests;
+- canvas safety, unrelated-image rejection, and different-resolution checks;
+- CLI help verification.
+
+Large 4-, 6-, and 15-image stress runs are intentionally not required for the basic evaluator setup. Images with insufficient overlap, strong parallax, or incompatible viewpoints should be rejected instead of being forced into a malformed panorama.
 
 ---
 
 ## 14. Testing Approach
 Automated testing is implemented using `pytest` in `tests/`:
 - **Unit Tests**: Verified isolated functionality for input handling, preprocessing, feature extraction, descriptor matching, RANSAC homography, canvas warping, and distance blending.
-- **Integration Tests**: Verified end-to-end 2-image, 3-image, resolution mismatch, and failure cases.
-- **Results**: 100% test pass rate (19 / 19 tests passed in 10.40 seconds).
+- **Integration Tests**: Cover end-to-end 2-image and 3-image sample stitching, resolution mismatch, canvas safety, and unrelated-image failure handling. Additional 4- and 6-image tests are included for broader local validation.
+- **Focused validation**: The current submission validation passed the 12 homography tests and the selected lightweight pipeline checks. Run `python -m pytest tests/ -v` to execute the complete local suite when time and hardware permit.
 
 ---
 
