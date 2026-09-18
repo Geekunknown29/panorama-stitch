@@ -10,6 +10,53 @@ The **Intelligent Panorama Builder** is a self-contained Python command-line uti
 
 The system exposes every algorithmic phase of the computer vision pipeline cleanly in code, without concealing logic behind black-box high-level convenience wrappers.
 
+## Quick Start
+
+These steps are sufficient for a clean installation by a first-time evaluator.
+
+1. Install Python 3.10 or newer and make sure `python` is available in a terminal.
+2. Clone the repository and enter its directory:
+
+    ```bash
+    git clone https://github.com/Geekunknown29/panorama-stitch.git
+    cd panorama-stitch
+    ```
+
+3. Create and activate a virtual environment.
+
+    **Windows PowerShell:**
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    ```
+
+    **Linux/macOS:**
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    ```
+
+4. Install the project dependencies:
+
+    ```bash
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+    ```
+
+5. Verify the installation:
+
+    ```bash
+    python main.py --help
+    ```
+
+6. Run a sample three-image panorama:
+
+    ```bash
+    python main.py --input data/sample/scene1_01.jpg data/sample/scene1_02.jpg data/sample/scene1_03.jpg --output outputs/panorama.jpg
+    ```
+
+The application creates the output directory when needed. Existing panorama, metrics, and debug files are preserved; a later run receives a numbered filename such as `panorama_1.jpg` instead of overwriting the earlier result.
+
 ---
 
 ## 2. Problem Statement
@@ -187,8 +234,8 @@ panorama-builder/
 
 1. **Clone Repository**:
    ```bash
-   git clone <repository-url>
-   cd panorama-builder
+    git clone https://github.com/Geekunknown29/panorama-stitch.git
+    cd panorama-stitch
    ```
 
 2. **Create & Activate Virtual Environment**:
@@ -202,8 +249,11 @@ panorama-builder/
 
 3. **Install Dependencies**:
    ```bash
-   pip install -r requirements.txt
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
    ```
+
+No API keys, databases, external services, or environment files are required. The included sample images can be used offline after dependency installation.
 
 ---
 
@@ -233,12 +283,28 @@ python main.py --input data/sample/scene1_01.jpg data/sample/scene1_02.jpg --out
 python main.py --input data/sample/scene1_01.jpg data/sample/scene1_02.jpg data/sample/scene1_03.jpg --output outputs/panorama.jpg --debug
 ```
 
-### 11.3 Directory Input Mode
+### 11.3 Preserve a Manually Supplied Order
+
+Automatic ordering is enabled by default for three or more images. To stitch images exactly in the order supplied, add `--no-auto-order`:
+
+```bash
+python main.py --no-auto-order --input left.jpg center.jpg right.jpg --output outputs/manual_order.jpg
+```
+
+### 11.4 Directory Input Mode
 ```bash
 python main.py --input-dir data/sample/ --output outputs/panorama.jpg
 ```
 
-### 11.4 ORB Feature Detector with Custom Ratio
+### 11.5 GUI File Picker
+
+```bash
+python main.py --gui
+```
+
+Select at least two overlapping images in the file picker. The GUI mode enables automatic ordering for multi-image selections.
+
+### 11.6 ORB Feature Detector with Custom Ratio
 ```bash
 python main.py --input-dir data/sample/ --output outputs/panorama_orb.jpg --feature orb --ratio 0.80
 ```
@@ -255,7 +321,10 @@ python main.py --input-dir data/sample/ --output outputs/panorama_orb.jpg --feat
 | `-f`, `--feature` | Choice | `sift` | Feature detector algorithm: `sift` or `orb`. |
 | `-r`, `--ratio` | Float | `0.75` | Lowe's ratio test match filter threshold. |
 | `-m`, `--max-dimension` | Int | `1600` | Max width/height dimension for working copy resizing. |
-| `--auto-order` | Flag | `False` | Automatically reorder image sequence by match graph overlap. |
+| `--auto-order` | Flag | `True` for 3+ images | Automatically reorder image sequence by validated match-graph overlap. |
+| `--no-auto-order` | Flag | `False` | Disable automatic ordering and use the exact supplied image order. |
+| `--gui` | Flag | `False` | Open a native file picker for image selection. |
+| `--interactive` | Flag | `False` | Enter image paths interactively in the terminal. |
 | `--debug` | Flag | `False` | Export intermediate debug images and matrix text files to `outputs/debug/`. |
 
 ---
@@ -294,8 +363,10 @@ outputs/panorama.jpg
 ## 14. Output Description
 
 Normal execution generates:
-- `outputs/panorama.jpg`: Final blended and cropped panoramic image.
-- `outputs/metrics.json`: Structured quantitative performance metrics report.
+- `outputs/panorama.jpg` or the next available numbered filename: Final blended and cropped panoramic image.
+- `outputs/metrics.json` or the next available numbered metrics filename: Structured quantitative performance metrics report.
+
+Generated output files are ignored by Git. They remain on the local machine and are not uploaded as source files when the project is committed.
 
 Sample `metrics.json`:
 ```json
@@ -335,7 +406,7 @@ Sample `metrics.json`:
 
 ## 15. Debug Mode
 
-When `--debug` is specified, the application exports diagnostic files to `outputs/debug/`:
+When `--debug` is specified, the application exports diagnostic files to a run-specific debug directory beside the output, for example `outputs/panorama_debug/`:
 - `keypoints_01.jpg`, `keypoints_02.jpg`, ...: Visualization of detected keypoints with orientation vectors.
 - `matches_01_02.jpg`, ...: Match correspondence lines connecting feature pairs across images.
 - `homography_01_02.txt`, ...: Plain text files containing the estimated $3 \times 3$ floating-point homography matrix.
